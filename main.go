@@ -1,4 +1,4 @@
-package firestoredata_to_struct
+package main
 
 import (
 	"fmt"

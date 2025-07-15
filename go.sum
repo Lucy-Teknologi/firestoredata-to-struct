@@ -1,0 +1,12 @@
+github.com/google/go-cmp v0.5.5 h1:Khx7svrCpmxxtHBq5j2mp/xVjsi8hQMfNLvJFAlrGgU=
+github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/googleapis/google-cloudevents-go v0.10.0 h1:Qfvpni+6qHtXbXc9EaCSWV21TGo4ISEmCyCOi6nkl6E=
+github.com/googleapis/google-cloudevents-go v0.10.0/go.mod h1:Qt8NvEAPeoF4e5XP3jEwVQN4o+6Xw2w4iIDIZxlSrA4=
+golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543 h1:E7g+9GITq07hpfrRu66IVDexMakfv52eLZ2CXBWiKr4=
+golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
+google.golang.org/genproto v0.0.0-20250707201910-8d1bb00bc6a7 h1:FGOcxvKlJgRBVbXeugjljCfCgfKWhC42FBoYmTCWVBs=
+google.golang.org/genproto v0.0.0-20250707201910-8d1bb00bc6a7/go.mod h1:249YoW4b1INqFTEop2T4aJgiO7UBYJrpejsaLvjWfI8=
+google.golang.org/protobuf v1.36.6 h1:z1NpPI8ku2WgiWnf+t9wTPsn6eP1L7ksHUlkfLvd9xY=
+google.golang.org/protobuf v1.36.6/go.mod h1:jduwjTPXsFjZGTmRluh+L6NjiWu7pchiJ2/5YcXBHnY=

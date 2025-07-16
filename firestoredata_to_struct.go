@@ -1,13 +1,16 @@
 package firestoredata_to_struct
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"time"
 
+	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/google/uuid"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
 	"google.golang.org/genproto/googleapis/type/latlng"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -17,7 +20,60 @@ var (
 	typeOfUUID      = reflect.TypeOf(uuid.UUID{})
 )
 
-// To is a generic function that maps Firestore event data to any Go struct
+// ConvertEventToStruct parses a CloudEvent containing Firestore document change data,
+// unmarshals the protobuf payload, and converts the "before" and "after" document states
+// into Go structs of type T. It returns pointers to the before and after structs, or nil
+// if the respective document state is absent. If the event's content type is not
+// "application/protobuf", or if unmarshalling or conversion fails, an error is returned.
+//
+// T should be a struct type matching the Firestore document schema.
+//
+// Parameters:
+//
+//	ctx   - context for cancellation and deadlines
+//	event - CloudEvent containing Firestore document change data
+//
+// Returns:
+//
+//	before - pointer to the struct representing the document state before the change (or nil)
+//	after  - pointer to the struct representing the document state after the change (or nil)
+//	error  - error if any step fails
+func ConvertEventToStruct[T any](ctx context.Context, event event.Event) (*T, *T, error) {
+	if event.DataContentType() != "application/protobuf" {
+		return nil, nil, fmt.Errorf("unexpected content type: %s", event.DataContentType())
+	}
+
+	var data firestoredata.DocumentEventData
+	err := proto.Unmarshal(event.Data(), &data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshall protobuf data from cloudevent: %w", err)
+	}
+
+	pbDocBefore := data.GetOldValue()
+	pbDocAfter := data.GetValue()
+
+	var before *T
+	if pbDocBefore != nil {
+		var tmp T
+		if err := FirestoreDataTo(pbDocBefore.Fields, &tmp); err != nil {
+			return nil, nil, fmt.Errorf("failed to convert event data to struct: %w", err)
+		}
+		before = &tmp
+	}
+
+	var after *T
+	if pbDocAfter != nil {
+		var tmp T
+		if err := FirestoreDataTo(pbDocAfter.Fields, &tmp); err != nil {
+			return nil, nil, fmt.Errorf("failed to convert event data to struct: %w", err)
+		}
+		after = &tmp
+	}
+
+	return before, after, nil
+}
+
+// FireStoreDataTo is a generic function that maps Firestore event data to any Go struct
 // that uses `firestore:"..."` tags. It works similarly to the official client library's
 // DocumentSnapshot.DataTo() method.
 //

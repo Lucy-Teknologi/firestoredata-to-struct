@@ -15,7 +15,7 @@ Built to simplify Firestore-triggered Cloud Functions in Go.
 go get github.com/Lucy-Teknologi/firestoredata-to-struct
 ```
 
-## Installation
+## Usage
 
 ```go
 import (

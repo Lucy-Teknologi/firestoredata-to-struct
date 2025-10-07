@@ -2,248 +2,71 @@ package firestoredata_to_struct
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"reflect"
-	"time"
 
+	// Replace with your actual import paths
+	// "your/path/to/models"
+
+	"github.com/bennovw/firestruct" // Dependency on the external package
 	"github.com/cloudevents/sdk-go/v2/event"
-	"github.com/google/uuid"
-	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
-	"google.golang.org/genproto/googleapis/type/latlng"
-	"google.golang.org/protobuf/proto"
 )
 
-var (
-	typeOfByteSlice = reflect.TypeOf([]byte{})
-	typeOfGoTime    = reflect.TypeOf(time.Time{})
-	typeOfLatLng    = reflect.TypeOf(latlng.LatLng{})
-	typeOfUUID      = reflect.TypeOf(uuid.UUID{})
-)
-
-// ConvertEventToStruct parses a CloudEvent containing Firestore document change data,
-// unmarshals the protobuf payload, and converts the "before" and "after" document states
-// into Go structs of type T. It returns pointers to the before and after structs, or nil
-// if the respective document state is absent. If the event's content type is not
-// "application/protobuf", or if unmarshalling or conversion fails, an error is returned.
-//
-// T should be a struct type matching the Firestore document schema.
-//
-// Parameters:
-//
-//	ctx   - context for cancellation and deadlines
-//	event - CloudEvent containing Firestore document change data
-//
-// Returns:
-//
-//	before - pointer to the struct representing the document state before the change (or nil)
-//	after  - pointer to the struct representing the document state after the change (or nil)
-//	error  - error if any step fails
-func ConvertEventToStruct[T any](ctx context.Context, event event.Event) (*T, *T, error) {
-	if event.DataContentType() != "application/protobuf" {
-		return nil, nil, fmt.Errorf("unexpected content type: %s", event.DataContentType())
+// ConvertEventToStruct parses a CloudEvent, unmarshals the JSON payload into
+// the firestruct model, and converts the "before" and "after" document states
+// into Go structs of type T.
+func ConvertEventToStruct[T any](ctx context.Context, e event.Event) (*T, *T, error) {
+	// 1. Check content type (Note: firestruct expects JSON-encoded protobuf)
+	if e.DataContentType() != "application/json" {
+		// Real Firestore CE often uses application/json for the full event body
+		// containing the firestoredata.DocumentEventData structure.
+		return nil, nil, fmt.Errorf("unexpected content type: %s (expected application/json)", e.DataContentType())
 	}
 
-	var data firestoredata.DocumentEventData
-	err := proto.Unmarshal(event.Data(), &data)
+	var cloudEvent firestruct.FirestoreCloudEvent
+
+	// 2. Unmarshal the CloudEvent data (which is JSON-encoded firestoredata.DocumentEventData)
+	// Note: e.Data() returns the raw bytes. e.DataEncoded is an older field/concept.
+	err := json.Unmarshal(e.Data(), &cloudEvent)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to unmarshall protobuf data from cloudevent: %w", err)
+		return nil, nil, fmt.Errorf("failed to unmarshal JSON payload into FirestoreCloudEvent: %w", err)
 	}
-
-	pbDocBefore := data.GetOldValue()
-	pbDocAfter := data.GetValue()
 
 	var before *T
-	if pbDocBefore != nil {
+	// 3. Handle 'before' document (OldValue)
+	if cloudEvent.OldValue.Fields != nil {
 		var tmp T
-		if err := FirestoreDataTo(pbDocBefore.Fields, &tmp); err != nil {
-			return nil, nil, fmt.Errorf("failed to convert event data to struct: %w", err)
+
+		// **FIX 1: Unwrap the Protobuf fields first.**
+		unwrappedBefore, err := firestruct.UnwrapFirestoreFields(cloudEvent.OldValue.Fields)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to unwrap 'before' document fields: %w", err)
+		}
+
+		// **FIX 2: Pass the unwrapped Go map (map[string]any) to DataTo.**
+		if err := firestruct.DataTo(&tmp, unwrappedBefore); err != nil {
+			return nil, nil, fmt.Errorf("failed to convert 'before' document data to struct: %w", err)
 		}
 		before = &tmp
 	}
 
 	var after *T
-	if pbDocAfter != nil {
+	// 4. Handle 'after' document (Value)
+	if cloudEvent.Value.Fields != nil {
 		var tmp T
-		if err := FirestoreDataTo(pbDocAfter.Fields, &tmp); err != nil {
-			return nil, nil, fmt.Errorf("failed to convert event data to struct: %w", err)
+
+		// Unwrap the Protobuf fields first.
+		unwrappedAfter, err := firestruct.UnwrapFirestoreFields(cloudEvent.Value.Fields)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to unwrap 'after' document fields: %w", err)
+		}
+
+		// Pass the unwrapped Go map (map[string]any) to DataTo.
+		if err := firestruct.DataTo(&tmp, unwrappedAfter); err != nil {
+			return nil, nil, fmt.Errorf("failed to convert 'after' document data to struct: %w", err)
 		}
 		after = &tmp
 	}
 
 	return before, after, nil
-}
-
-// FireStoreDataTo is a generic function that maps Firestore event data to any Go struct
-// that uses `firestore:"..."` tags. It works similarly to the official client library's
-// DocumentSnapshot.DataTo() method.
-//
-// Parameters:
-//
-//	data: The map of fields from the Firestore DocumentEventData.Value.
-//	v: A pointer to the struct that you want to populate.
-//
-// Returns an error if the input is not a pointer to a struct or if a mapping error occurs.
-func FirestoreDataTo(data map[string]*firestoredata.Value, v interface{}) error {
-	val := reflect.ValueOf(v)
-	if val.Kind() != reflect.Ptr || val.IsNil() {
-		return fmt.Errorf("FirestoreDataTo: expected non-nil pointer to struct, got %T", v)
-	}
-
-	elem := val.Elem()
-	if elem.Kind() != reflect.Struct {
-		return fmt.Errorf("FirestoreDataTo: expected pointer to struct, got pointer to %s", elem.Kind())
-	}
-
-	return mapToStruct(data, elem)
-}
-
-// mapToStruct is the core recursive function that populates a struct value.
-func mapToStruct(data map[string]*firestoredata.Value, val reflect.Value) error {
-	typ := val.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		fieldTyp := typ.Field(i)
-		fieldVal := val.Field(i)
-
-		if !fieldVal.CanSet() {
-			continue
-		}
-
-		tag := fieldTyp.Tag.Get("firestore")
-		if tag == "" || tag == "-" {
-			continue
-		}
-
-		firestoreValue, ok := data[tag]
-		if !ok {
-			continue
-		}
-
-		if err := setFieldValue(fieldVal, firestoreValue); err != nil {
-			return fmt.Errorf("failed to set field %s: %w", fieldTyp.Name, err)
-		}
-	}
-	return nil
-}
-
-// setFieldValue converts a *firestoredata.Value into the appropriate Go type and sets it
-// on the given reflect.Value for a struct field.
-func setFieldValue(fieldVal reflect.Value, firestoreValue *firestoredata.Value) error {
-	if firestoreValue == nil || firestoreValue.ValueType == nil {
-		return nil // ignore nils
-	}
-
-	// Handle Firestore explicit nulls
-	if _, ok := firestoreValue.ValueType.(*firestoredata.Value_NullValue); ok {
-		// Leave as zero value, or nil if pointer
-		if fieldVal.Kind() == reflect.Ptr {
-			fieldVal.Set(reflect.Zero(fieldVal.Type()))
-		}
-		return nil
-	}
-
-	// Handle pointers
-	if fieldVal.Kind() == reflect.Ptr {
-		if fieldVal.IsNil() {
-			fieldVal.Set(reflect.New(fieldVal.Type().Elem()))
-		}
-		return setFieldValue(fieldVal.Elem(), firestoreValue)
-	}
-
-	switch fieldVal.Type() {
-	case typeOfGoTime:
-		if ts := firestoreValue.GetTimestampValue(); ts != nil {
-			fieldVal.Set(reflect.ValueOf(ts.AsTime()))
-		}
-		return nil
-
-	case typeOfByteSlice:
-		if bs := firestoreValue.GetBytesValue(); bs != nil {
-			fieldVal.SetBytes(bs)
-		}
-		return nil
-
-	case typeOfUUID:
-		s := firestoreValue.GetStringValue()
-		parsed, err := uuid.Parse(s)
-		if err != nil {
-			return fmt.Errorf("invalid UUID: %v", err)
-		}
-		fieldVal.Set(reflect.ValueOf(parsed))
-		return nil
-
-	case typeOfLatLng:
-		if latlngVal := firestoreValue.GetGeoPointValue(); latlngVal != nil {
-			ll := &latlng.LatLng{
-				Latitude:  latlngVal.Latitude,
-				Longitude: latlngVal.Longitude,
-			}
-			fieldVal.Set(reflect.ValueOf(ll))
-		}
-		return nil
-	}
-
-	// Handle common kinds
-	switch fieldVal.Kind() {
-	case reflect.String:
-		fieldVal.SetString(firestoreValue.GetStringValue())
-
-	case reflect.Bool:
-		fieldVal.SetBool(firestoreValue.GetBooleanValue())
-
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		fieldVal.SetInt(firestoreValue.GetIntegerValue())
-
-	case reflect.Float32, reflect.Float64:
-		switch v := firestoreValue.ValueType.(type) {
-		case *firestoredata.Value_DoubleValue:
-			fieldVal.SetFloat(v.DoubleValue)
-		case *firestoredata.Value_IntegerValue:
-			fieldVal.SetFloat(float64(v.IntegerValue))
-		default:
-			return fmt.Errorf("unsupported numeric type %T for float field", v)
-		}
-
-	case reflect.Slice:
-		arr := firestoreValue.GetArrayValue()
-		if arr == nil {
-			return fmt.Errorf("expected array value for slice field")
-		}
-		elemType := fieldVal.Type().Elem()
-		slice := reflect.MakeSlice(fieldVal.Type(), 0, len(arr.Values))
-		for _, item := range arr.Values {
-			elem := reflect.New(elemType).Elem()
-			if err := setFieldValue(elem, item); err != nil {
-				return err
-			}
-			slice = reflect.Append(slice, elem)
-		}
-		fieldVal.Set(slice)
-
-	case reflect.Map:
-		mapVal := firestoreValue.GetMapValue()
-		if mapVal == nil {
-			return fmt.Errorf("expected map value for map field")
-		}
-		newMap := reflect.MakeMap(fieldVal.Type())
-		elemType := fieldVal.Type().Elem()
-		for key, val := range mapVal.Fields {
-			elem := reflect.New(elemType).Elem()
-			if err := setFieldValue(elem, val); err != nil {
-				return err
-			}
-			newMap.SetMapIndex(reflect.ValueOf(key), elem)
-		}
-		fieldVal.Set(newMap)
-
-	case reflect.Struct:
-		mapVal := firestoreValue.GetMapValue()
-		if mapVal == nil {
-			return fmt.Errorf("expected map for struct field, got %T", firestoreValue.ValueType)
-		}
-		return mapToStruct(mapVal.Fields, fieldVal)
-
-	default:
-		return fmt.Errorf("unsupported kind %s for field", fieldVal.Kind())
-	}
-	return nil
 }

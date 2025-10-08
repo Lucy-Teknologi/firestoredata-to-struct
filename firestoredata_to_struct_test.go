@@ -12,7 +12,7 @@ import (
 	"github.com/cloudevents/sdk-go/v2/event"
 	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
 	"google.golang.org/api/option"
-	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -140,7 +140,7 @@ func TestFirestoreDataToStructOnOrderingModel(t *testing.T) {
 
 	// --- 4. Marshal the Protobuf Event Data into JSON ---
 	// The firestruct package expects the CloudEvent data to be JSON.
-	jsonPayload, err := protojson.Marshal(eventData)
+	binPayload, err := proto.Marshal(eventData)
 	if err != nil {
 		t.Fatalf("Failed to marshal event data to JSON: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestFirestoreDataToStructOnOrderingModel(t *testing.T) {
 	e.SetType("google.cloud.firestore.document.v1.written")
 
 	// THIS IS THE CRITICAL FIX: Set the marshaled *JSON bytes*
-	if err := e.SetData("application/json", jsonPayload); err != nil {
+	if err := e.SetData("application/protobuf", binPayload); err != nil {
 		t.Fatalf("Failed to set event data: %v", err) // Should now succeed
 	}
 

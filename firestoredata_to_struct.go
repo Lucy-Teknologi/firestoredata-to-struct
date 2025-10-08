@@ -10,24 +10,50 @@ import (
 
 	"github.com/bennovw/firestruct" // Dependency on the external package
 	"github.com/cloudevents/sdk-go/v2/event"
+	"github.com/googleapis/google-cloudevents-go/cloud/firestoredata"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 // ConvertEventToStruct parses a CloudEvent, unmarshals the JSON payload into
 // the firestruct model, and converts the "before" and "after" document states
 // into Go structs of type T.
 func ConvertEventToStruct[T any](ctx context.Context, e event.Event) (*T, *T, error) {
-	// 1. Check content type (Note: firestruct expects JSON-encoded protobuf)
-	if e.DataContentType() != "application/json" {
-		// Real Firestore CE often uses application/json for the full event body
-		// containing the firestoredata.DocumentEventData structure.
-		return nil, nil, fmt.Errorf("unexpected content type: %s (expected application/json)", e.DataContentType())
+	dataBytes := e.Data()
+	contentType := e.DataContentType()
+
+	if len(dataBytes) == 0 {
+		return nil, nil, fmt.Errorf("cloud event data is empty")
+	}
+
+	// 1. Handle "application/protobuf" by converting the binary data to JSON
+	if contentType == "application/protobuf" {
+		var protoData firestoredata.DocumentEventData
+
+		// Unmarshal the raw Protobuf binary data
+		if err := proto.Unmarshal(dataBytes, &protoData); err != nil {
+			return nil, nil, fmt.Errorf("failed to unmarshal binary protobuf data: %w", err)
+		}
+
+		// Marshal the Protobuf structure into JSON bytes (using protojson)
+		// This creates the JSON payload that firestruct.FirestoreCloudEvent expects.
+		jsonBytes, err := protojson.Marshal(&protoData)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to marshal protobuf data to JSON: %w", err)
+		}
+
+		dataBytes = jsonBytes // Use JSON data for the next step
+
+	} else if contentType != "application/json" {
+		// Only JSON or Protobuf is supported
+		return nil, nil, fmt.Errorf("unexpected content type: %s (only application/protobuf or application/json is supported)", contentType)
 	}
 
 	var cloudEvent firestruct.FirestoreCloudEvent
 
 	// 2. Unmarshal the CloudEvent data (which is JSON-encoded firestoredata.DocumentEventData)
 	// Note: e.Data() returns the raw bytes. e.DataEncoded is an older field/concept.
-	err := json.Unmarshal(e.Data(), &cloudEvent)
+	err := json.Unmarshal(dataBytes, &cloudEvent)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to unmarshal JSON payload into FirestoreCloudEvent: %w", err)
 	}

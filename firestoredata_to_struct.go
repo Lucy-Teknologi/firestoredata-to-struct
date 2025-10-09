@@ -69,10 +69,13 @@ func ConvertEventToStruct[T any](ctx context.Context, e event.Event) (*T, *T, er
 			return nil, nil, fmt.Errorf("failed to unwrap 'before' document fields: %w", err)
 		}
 
-		// **FIX 2: Pass the unwrapped Go map (map[string]any) to DataTo.**
+		// **FIX 2: Normalize numeric types based on struct T**
+		// **FIX 3: Convert map → struct**
+		unwrappedBefore = normalizeNumbers(unwrappedBefore).(map[string]any)
 		if err := firestruct.DataTo(&tmp, unwrappedBefore); err != nil {
 			return nil, nil, fmt.Errorf("failed to convert 'before' document data to struct: %w", err)
 		}
+
 		before = &tmp
 	}
 
@@ -87,6 +90,8 @@ func ConvertEventToStruct[T any](ctx context.Context, e event.Event) (*T, *T, er
 			return nil, nil, fmt.Errorf("failed to unwrap 'after' document fields: %w", err)
 		}
 
+		// Normalize numeric types based on struct T
+		unwrappedAfter = normalizeNumbers(unwrappedAfter).(map[string]any)
 		// Pass the unwrapped Go map (map[string]any) to DataTo.
 		if err := firestruct.DataTo(&tmp, unwrappedAfter); err != nil {
 			return nil, nil, fmt.Errorf("failed to convert 'after' document data to struct: %w", err)
@@ -95,4 +100,25 @@ func ConvertEventToStruct[T any](ctx context.Context, e event.Event) (*T, *T, er
 	}
 
 	return before, after, nil
+}
+
+func normalizeNumbers(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			x[k] = normalizeNumbers(val)
+		}
+		return x
+	case []any:
+		for i, val := range x {
+			x[i] = normalizeNumbers(val)
+		}
+		return x
+	case int:
+		return float64(x)
+	case int64:
+		return float64(x)
+	default:
+		return x
+	}
 }
